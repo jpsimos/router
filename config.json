@@ -1,0 +1,76 @@
+{
+	"interfaces" : {
+		"wan0" : {
+			"type" : "wan",
+			"hwaddr" : "7e:b5:2a:7c:dd:a5"
+		},
+		"lan0" : {
+			"type" : "lan",
+			"hwaddr" : "6a:48:22:40:31:20"
+		},
+		"lan1" : {
+			"type" : "lan",
+			"hwaddr" : "92:9e:2b:59:04:b1"
+		},
+		"lan2" : {
+			"type" : "lan",
+			"hwaddr" : "7a:b9:57:3c:5a:ac"
+		},
+		"lan3" : {
+			"type" : "lan",
+			"hwaddr" : "0a:2d:67:8c:b8:ff"
+		},
+		"wlan0" : {
+			"type" : "wifi",
+			"hwaddr" : "12:a5:68:92:9c:55"
+		},
+		"wlan1" : {
+			"type" : "wifi",
+			"hwaddr" : "32:3f:71:fd:58:0d"
+		},
+		"br0" : {
+			"type" : "bridge",
+			"enable" : true,
+			"hwaddr" : "92:1d:da:fb:9e:67",
+			"address" : "192.168.1.1",
+			"subnet" : "24",
+			"broadcast" : "192.168.1.255",
+			"metric" : "55",
+			"interfaces" : [
+				"lan0",
+				"lan1",
+				"lan2",
+				"lan3",
+				"wlan0",
+				"wlan1"
+			],
+			"stp" : false
+		}
+	},
+	"dnsmasq" : {
+		"dhcp0" : {
+			"enable" : true,
+			"interface" : "br0",
+			"address" : "192.168.1.1",
+			"dhcp-begin" : "192.168.1.10",
+			"dhcp-end" : "192.168.1.100",
+			"lease" : "3600",
+			"domain" : "lan",
+			"append" : "/opt/router/dnsmasq-dhcp0.append"
+		}
+	},
+	"hostapd" : {
+		"ap0" : {
+			"enable" : true,
+			"interface" : "wlan0",
+			"bridge" : "br0",
+			"append" : "/opt/router/hostapd-ap0.append"
+		},
+		"ap1" : {
+			"enable" : true,
+			"interface" : "wlan1",
+			"bridge" : "br0",
+			"append" : "/opt/router/hostapd-ap1.append"
+		}
+	}
+}

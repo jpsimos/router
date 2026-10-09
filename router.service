@@ -1,0 +1,22 @@
+# Author Jacob A. Psimos
+
+[Unit]
+Description=Linux router
+After=network-online.target NetworkManager.service
+Wants=network-online.target
+Conflicts=wpa_supplicant.service hostapd.service
+
+[Service]
+User=root
+Group=router
+#NoNewPrivileges=true
+RuntimeDirectory=router
+RuntimeDirectoryMode=0770
+ExecStart=/opt/router/service.py --start --config /opt/router/config.json
+ExecStop=/opt/router/service.py --stop --config /opt/router/config.json
+ExecReload=/opt/router/service.py --reload --config /opt/router/config.json
+Type=oneshot
+RemainAfterExit=true
+
+[Install]
+WantedBy=multi-user.target
