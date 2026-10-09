@@ -3,14 +3,19 @@
 '''
 	Author Jacob A. Psimos
 	
-	Manager class to scan phys and configure hostapd instances.
+	Utility to interact with configured hostapd instances.
 '''
 
+import sys
 import os
 import sys
 import json
 import subprocess
 import time
+import helpers
+
+COMMAND_STA = 1
+COMMAND_SIGNALS = 2
 
 Frequencies = {
 	'2.4' : [
@@ -69,12 +74,129 @@ Frequencies = {
 	]
 }
 
-class WiFi:
-	m_routerInstance = None
+def PrintHelp(exitCode = None):
+	print('linux router wifi')
+	print(f'{sys.argv[0]} [options] [command] args...')
+	print()
+	print(' --help           -h          Show this help message.')
+	print(' --config         -c          Use provided config file.')
+	print()
+	print('Commands')
+	print(' stas             Show STAs.')
+	print(' signal           Show STA signals.')
+	print('Author Jacob A. Psimos')
+	
+	if exitCode is not None:
+		sys.exit(exitCode)
 
-	def __init__(self, routerInstance):
+def ParseArguments():
+	command = None
+	configFile = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'config.json')
+	
+	if len(sys.argv) == 1:
+		PrintHelp(exitCode = 1)
+	
+	for argi in range(1, len(sys.argv)):
+		arg = sys.argv[argi]
+		nextArg = sys.argv[argi + 1] if argi + 1 < len(sys.argv) else None
+
+		if arg == '--help' or arg == '-h':
+			PrintHelp(exitCode = 0)
+
+		elif arg == '--config' or arg == '-c':
+			configFile = nextArg
+			
+		elif arg == 'stas' : 
+			command = COMMAND_STA
+			
+		elif arg == 'signals':
+			command = COMMAND_SIGNALS
+
+	return configFile, command
+	
+def GetStas(config):
+	hadError = False
+	stas = []
+	
+	for hostapdInstanceName in config['hostapd']:
+		hostapdInterface = helpers.SanitizeInterfaceName(config['hostapd'][hostapdInstanceName]['interface'])
 		
-	def HostapdCommand(self, interface, command):
-		pass
+		proc = subprocess.run(
+			[
+			'hostapd_cli',
+			'-p',
+			'/run/router',
+			'-i',
+			hostapdInterface,
+			'list_sta'
+			],
+			capture_output = True
+		)
+		
+		if proc.returncode == 0:
+			staList = proc.stdout.decode('utf-8').strip().split('\n')
+			
+			for sta in staList:
+				proc = subprocess.run(
+					[
+					'hostapd_cli',
+					'-p',
+					'/run/router',
+					'-i',
+					hostapdInterface,
+					'sta',
+					sta
+					],
+					capture_output = True
+				)
+				
+				if proc.returncode == 0:
+					staObject = { 'sta' : sta, 'interface' : hostapdInterface }
+					staInfoList = proc.stdout.decode('utf-8').strip().split('\n')
+					
+					for info in staInfoList:
+						infoFields = info.split('=')
+						
+						if len(infoFields) == 2:
+							staObject[infoFields[0]] = infoFields[1]
+								
+					stas.append(staObject)
+					
+				else:
+					hadError = True
+		else:
+			hadError = True
+		
+	return not hadError, stas
+	
+def GetSignals(config):
+	success, stas = GetStas(config)
+	hadError = not success
+	signals = []
+	
+	for sta in stas:
+		signals.append({ 'sta' : sta['sta'], 'signal' : sta['signal'] })
+			
+	return not hadError, signals
+
+def WiFiMain():
+	configFile, command = ParseArguments()
+	
+	if command is None:
+		PrintHelp(exitCode = 1)
+	
+	config = helpers.LoadConfig(configFile)
+	
+	if not command is None:
+		if command == COMMAND_STA:
+			_, stas = GetStas(config)
+			print(json.dumps(stas))
+			
+		elif command == COMMAND_SIGNALS:
+			_, signals = GetSignals(config)
+			print(json.dumps(signals))
+			
+if __name__ == '__main__':
+	sys.exit(WiFiMain())
 		
 		
