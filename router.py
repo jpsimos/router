@@ -76,43 +76,46 @@ class Router:
 	def Reload(self):
 		hadError = False
 		
-		for dnsmasqInstanceName in self.m_config['dnsmasq']:
-			dnsmasqConfFilePath = os.path.join('/run/router', helpers.SanitizeFileName(f'dnsmasq-{dnsmasqInstanceName}.conf'))
-			dnsmasqPidFilePath = os.path.join('/run/router', helpers.SanitizeFileName(f'dnsmasq-{dnsmasqInstanceName}.pid'))
-			
-			if os.path.isfile(dnsmasqPidFilePath):
-				with open(dnsmasqPidFilePath, 'r') as dnsmasqPidFile:
-					dnsmasqPid = dnsmasqPidFile.read().strip()
-					
-					if dnsmasqPid.isnumeric():
-						proc = subprocess.run([
-							'kill',
-							'-HUP',
-							dnsmasqPid
-						])
+		hadErrorRegeneratingDnsmasqConfig = self.SetupDnsmasq(onlyGenerateConfig = True)
+		if not hadErrorRegeneratingDnsmasqConfig:
+		
+			for dnsmasqInstanceName in self.m_config['dnsmasq']:
+				dnsmasqPidFilePath = os.path.join('/run/router', helpers.SanitizeFileName(f'dnsmasq-{dnsmasqInstanceName}.pid'))
+				
+				if os.path.isfile(dnsmasqPidFilePath):
+					with open(dnsmasqPidFilePath, 'r') as dnsmasqPidFile:
+						dnsmasqPid = dnsmasqPidFile.read().strip()
 						
-						if proc.returncode != 0:
-							hadError = True
-			
-		for hostapdInstanceName in self.m_config['hostapd']:
-			hostapdConfFilePath = os.path.join('/run/router', helpers.SanitizeFileName(f'hostapd-{hostapdInstanceName}.conf'))
-			hostapdPidFilePath = os.path.join('/run/router', helpers.SanitizeFileName(f'hostapd-{hostapdInstanceName}.pid'))
-			
-			if os.path.isfile(hostapdConfFilePath):
-				with open(hostapdConfFilePath, 'r') as hostapdPidFile:
-					hostapdPid = hostapdPidFile.read().strip()
-					
-					if hostapdPid.isnumeric():
-						proc = subprocess.run([
-							'kill',
-							'-HUP',
-							hostapdPid
-						])
-						
-						if proc.returncode != 0:
-							hadError = True
+						if dnsmasqPid.isnumeric():
+							proc = subprocess.run([
+								'kill',
+								'-HUP',
+								dnsmasqPid
+							])
 							
-		return not hadError
+							if proc.returncode != 0:
+								hadError = True
+			
+		hadErrorRegeneratingHostapdConfig = self.SetupHostapd(onlyGenerateConfig = True)
+		if not hadErrorRegeneratingHostapdConfig:
+			for hostapdInstanceName in self.m_config['hostapd']:
+				hostapdPidFilePath = os.path.join('/run/router', helpers.SanitizeFileName(f'hostapd-{hostapdInstanceName}.pid'))
+				
+				if os.path.isfile(hostapdConfFilePath):
+					with open(hostapdConfFilePath, 'r') as hostapdPidFile:
+						hostapdPid = hostapdPidFile.read().strip()
+						
+						if hostapdPid.isnumeric():
+							proc = subprocess.run([
+								'kill',
+								'-HUP',
+								hostapdPid
+							])
+							
+							if proc.returncode != 0:
+								hadError = True
+							
+		return not hadError and not hadErrorRegeneratingDnsmasqConfig and not hadErrorRegeneratingHostapdConfig
 		
 	def SetupFirewall(self):
 		hadError = False
@@ -318,7 +321,175 @@ class Router:
 					raise Exception(f'{__file__}:{sys._getframe().f_lineno} Setting net.ipv4.ip_forward=1 failed with returncode={proc.returncode}. Permissions?')
 	
 		return not hadError
-							
+			
+	def SetupDnsmasq(self, onlyGenerateConfig = False):
+		hadError = False
+		
+		for dnsmasqInstanceName in self.m_config['dnsmasq']:
+			dnsmasqConf = []
+			dnsmasqInterface = helpers.SanitizeInterfaceName(self.m_config['dnsmasq'][dnsmasqInstanceName]['interface'])
+			dnsmasqAddress = self.m_config['dnsmasq'][dnsmasqInstanceName]['address']
+			dnsmasqDhcpBegin = self.m_config['dnsmasq'][dnsmasqInstanceName]['dhcp-begin']
+			dnsmasqDhcpEnd = self.m_config['dnsmasq'][dnsmasqInstanceName]['dhcp-end']
+			dnsmasqLease = self.m_config['dnsmasq'][dnsmasqInstanceName]['lease']
+			dnsmasqConfFilePath = os.path.join('/run/router', helpers.SanitizeFileName(f'dnsmasq-{dnsmasqInstanceName}.conf'))
+			dnsmasqPidFilePath = os.path.join('/run/router', helpers.SanitizeFileName(f'dnsmasq-{dnsmasqInstanceName}.pid'))
+			hostName = helpers.GetHostName()
+			dnsmasqConfContents = ''
+			
+			if not helpers.IsValidIpAddress(dnsmasqAddress) or not helpers.IsValidIpAddress(dnsmasqDhcpBegin) or not helpers.IsValidIpAddress(dnsmasqDhcpEnd):
+				hadError = True
+				raise Exception(f'{__file__}:{sys._getframe().f_lineno} Invalid IP Address(es) for dnsmasq instance {dnsmasqInstanceName}.')
+			
+			if 'enable' in self.m_config['dnsmasq'][dnsmasqInstanceName].keys():
+				if self.m_config['dnsmasq'][dnsmasqInstanceName]['enable'] is False:
+					continue
+			
+			if 'interface' in self.m_config['dnsmasq'][dnsmasqInstanceName].keys():
+				if helpers.InterfaceExists(self.m_config['dnsmasq'][dnsmasqInstanceName]['interface']):
+					dnsmasqConf.append(('interface', helpers.SanitizeInterfaceName(self.m_config['dnsmasq'][dnsmasqInstanceName]['interface'])))
+				else:
+					hadError = True
+					raise Exception(f'{__file__}:{sys._getframe().f_lineno} Interface does not exist.')
+					
+			dnsmasqConf.append(('dhcp-option', f'option:router,{dnsmasqAddress}'))
+			dnsmasqConf.append(('dhcp-range', f'{dnsmasqDhcpBegin},{dnsmasqDhcpEnd},{dnsmasqLease}'))
+			dnsmasqConf.append(('dhcp-option', f'option:dns-server,{dnsmasqAddress}'))
+			dnsmasqConf.append(('listen-address', dnsmasqAddress))
+			
+			if 'domain' in self.m_config['dnsmasq'][dnsmasqInstanceName].keys():
+				domain = self.m_config['dnsmasq'][dnsmasqInstanceName]['domain']
+				dnsmasqConf.append(('domain', domain))
+				dnsmasqConf.append(('local', '/' + domain + '/'))
+				dnsmasqConf.append(('dhcp-option', 'option:domain-name,' + domain))
+				dnsmasqConf.append(('dhcp-option', 'option:domain-search,' + domain))
+				dnsmasqConf.append(('host-record', f'{hostName},{hostName}.{domain},{dnsmasqAddress}'))
+				dnsmasqConf.append(('expand-hosts', ''))
+				dnsmasqConf.append(('domain-needed', ''))
+
+			for dnsmasqConfOption, dnsmasqConfValue in dnsmasqConf:
+				if len(dnsmasqConfValue) > 0:
+					dnsmasqConfContents += f"{dnsmasqConfOption}={dnsmasqConfValue}\n"
+				else:
+					dnsmasqConfContents += f"{dnsmasqConfOption}\n"
+					
+			if 'append' in self.m_config['dnsmasq'][dnsmasqInstanceName].keys():
+				sanitizedAppendFilePath = helpers.SanitizeFileName(self.m_config['dnsmasq'][dnsmasqInstanceName]['append'], allowSlashes = True)
+				
+				with open(sanitizedAppendFilePath, 'r', encoding = 'utf-8') as dnsmasqAppendFile:
+					dnsmasqConfContents += dnsmasqAppendFile.read()
+			
+			with open(dnsmasqConfFilePath, 'w', encoding = 'utf-8') as dnsmasqConfFile:
+				dnsmasqConfFile.write(dnsmasqConfContents)
+				
+			proc = subprocess.run([
+				'dnsmasq',
+				'-g',
+				'router',
+				'--test',
+				'-C',
+				dnsmasqConfFilePath
+			])
+			
+			if proc.returncode != 0:
+				hadError = True
+				raise Exception(f'{__file__}:{sys._getframe().f_lineno} dnsmasq conf is invalid.')
+				
+			if not onlyGenerateConfig:			
+				proc = subprocess.run([
+					'dnsmasq',
+					'-g',
+					'router',
+					'-x',
+					dnsmasqPidFilePath,
+					'-C',
+					dnsmasqConfFilePath
+				])
+				
+				if proc.returncode != 0:
+					hadError = True
+					raise Exception(f'{__file__}:{sys._getframe().f_lineno} dnsmasq exited with returncode={proc.returncode} Permissions?')	
+
+		return not hadError
+		
+	def SetupHostapd(self, onlyGenerateConfig = False):
+		hadError = False
+		ranRfkillUnblock = False
+		
+		for hostapdInstanceName in self.m_config['hostapd']:
+			hostapdInterface = self.m_config['hostapd'][hostapdInstanceName]['interface']
+			hostapdBridge = self.m_config['hostapd'][hostapdInstanceName]['bridge']
+			hostapdConfFilePath = os.path.join('/run/router', helpers.SanitizeFileName(f'hostapd-{hostapdInstanceName}.conf'))
+			hostapdPidFilePath = os.path.join('/run/router', helpers.SanitizeFileName(f'hostapd-{hostapdInstanceName}.pid'))
+			hostapdConfContents = ''
+			hostapdConf = []
+			
+			if 'enable' in self.m_config['hostapd'][hostapdInstanceName].keys():
+				if self.m_config['hostapd'][hostapdInstanceName]['enable'] is False:
+					continue
+			
+			if 'interface' in self.m_config['hostapd'][hostapdInstanceName].keys():
+				if helpers.InterfaceExists(self.m_config['hostapd'][hostapdInstanceName]['interface']):
+					hostapdConf.append(('interface', helpers.SanitizeInterfaceName(self.m_config['hostapd'][hostapdInstanceName]['interface'])))
+				else:
+					hadError = True
+					raise Exception(f'{__file__}:{sys._getframe().f_lineno} Hostapd interface does not exist.')
+					
+			if 'bssid' in self.m_config['hostapd'][hostapdInstanceName].keys():
+				if helpers.IsValidHwAddress(self.m_config['hostapd'][hostapdInstanceName]['bssid']):
+					hostapdConfContents += 'bssid=' + self.m_config['hostapd'][hostapdInstanceName]['bssid'] + "\n"
+					
+			if 'bridge' in self.m_config['hostapd'][hostapdInstanceName].keys():
+				if helpers.InterfaceExists(self.m_config['hostapd'][hostapdInstanceName]['bridge']):
+					hostapdConf.append(('bridge', helpers.SanitizeInterfaceName(self.m_config['hostapd'][hostapdInstanceName]['bridge'])))
+				else:
+					hadError = True
+					raise Exception(f'{__file__}:{sys._getframe().f_lineno} Hostapd bridge interface does not exist.')
+			
+			for hostapdConfOption, hostapdConfValue in hostapdConf:
+				if len(hostapdConfValue) > 0:
+					hostapdConfContents += f"{hostapdConfOption}={hostapdConfValue}\n"
+				else:
+					hostapdConfContents += f"{hostapdConfOption}\n"
+					
+			if 'append' in self.m_config['hostapd'][hostapdInstanceName].keys():
+				sanitizedAppendFilePath = helpers.SanitizeFileName(self.m_config['hostapd'][hostapdInstanceName]['append'], allowSlashes = True)
+				
+				with open(sanitizedAppendFilePath, 'r', encoding = 'utf-8') as hostapdAppendFile:
+					hostapdConfContents += hostapdAppendFile.read()
+				
+			with open(hostapdConfFilePath, 'w', encoding = "utf-8") as hostapdConfFile:
+				hostapdConfFile.write(hostapdConfContents)
+				
+			if not onlyGenerateConfig:	
+				# Before running hostapd for the first time, run rfkill to unblock the PHYs.
+				if not ranRfkillUnblock:
+					if helpers.RunRfkill(unblockAll = True):
+						ranRfkillUnblock = True
+					else:
+						hadError = True
+						raise Exception(f'{__file__}:{sys._getframe().f_lineno} rfkill failed.')
+				
+				proc = subprocess.run(
+					[
+					'hostapd',
+					'-dd',
+					'-K',
+					'-t',
+					'-B',
+					'-P',
+					hostapdPidFilePath,
+					hostapdConfFilePath
+					],
+					capture_output = True
+				)
+				
+				if proc.returncode != 0:
+					hadError = True
+					raise Exception(f'{__file__}:{sys._getframe().f_lineno} hostapd exited with returncode={proc.returncode} Permissions?' + "\n" + proc.stdout.decode('utf-8'))	
+
+		return not hadError
+		
 	def TeardownBridges(self, stopOnError = False):
 		hadError = False
 		
@@ -422,164 +593,6 @@ class Router:
 						if stopOnError:
 							raise Exception(f'{__file__}:{sys._getframe().f_lineno} Deleting bridge {bridgeInterfaceName} failed with returncode={proc.returncode} Permissions?')
 					
-		return not hadError
-			
-	def SetupDnsmasq(self):
-		hadError = False
-		
-		for dnsmasqInstanceName in self.m_config['dnsmasq']:
-			dnsmasqConf = []
-			dnsmasqInterface = helpers.SanitizeInterfaceName(self.m_config['dnsmasq'][dnsmasqInstanceName]['interface'])
-			dnsmasqAddress = self.m_config['dnsmasq'][dnsmasqInstanceName]['address']
-			dnsmasqDhcpBegin = self.m_config['dnsmasq'][dnsmasqInstanceName]['dhcp-begin']
-			dnsmasqDhcpEnd = self.m_config['dnsmasq'][dnsmasqInstanceName]['dhcp-end']
-			dnsmasqLease = self.m_config['dnsmasq'][dnsmasqInstanceName]['lease']
-			dnsmasqConfFilePath = os.path.join('/run/router', helpers.SanitizeFileName(f'dnsmasq-{dnsmasqInstanceName}.conf'))
-			dnsmasqPidFilePath = os.path.join('/run/router', helpers.SanitizeFileName(f'dnsmasq-{dnsmasqInstanceName}.pid'))
-			hostName = helpers.GetHostName()
-			dnsmasqConfContents = ''
-			
-			if not helpers.IsValidIpAddress(dnsmasqAddress) or not helpers.IsValidIpAddress(dnsmasqDhcpBegin) or not helpers.IsValidIpAddress(dnsmasqDhcpEnd):
-				hadError = True
-				raise Exception(f'{__file__}:{sys._getframe().f_lineno} Invalid IP Address(es) for dnsmasq instance {dnsmasqInstanceName}.')
-			
-			if 'enable' in self.m_config['dnsmasq'][dnsmasqInstanceName].keys():
-				if self.m_config['dnsmasq'][dnsmasqInstanceName]['enable'] is False:
-					continue
-			
-			if 'interface' in self.m_config['dnsmasq'][dnsmasqInstanceName].keys():
-				if helpers.InterfaceExists(self.m_config['dnsmasq'][dnsmasqInstanceName]['interface']):
-					dnsmasqConf.append(('interface', helpers.SanitizeInterfaceName(self.m_config['dnsmasq'][dnsmasqInstanceName]['interface'])))
-				else:
-					hadError = True
-					raise Exception(f'{__file__}:{sys._getframe().f_lineno} Interface does not exist.')
-					
-			dnsmasqConf.append(('dhcp-option', f'option:router,{dnsmasqAddress}'))
-			dnsmasqConf.append(('dhcp-range', f'{dnsmasqDhcpBegin},{dnsmasqDhcpEnd},{dnsmasqLease}'))
-			dnsmasqConf.append(('dhcp-option', f'option:dns-server,{dnsmasqAddress}'))
-			dnsmasqConf.append(('listen-address', dnsmasqAddress))
-			
-			if 'domain' in self.m_config['dnsmasq'][dnsmasqInstanceName].keys():
-				domain = self.m_config['dnsmasq'][dnsmasqInstanceName]['domain']
-				dnsmasqConf.append(('domain', domain))
-				dnsmasqConf.append(('local', '/' + domain + '/'))
-				dnsmasqConf.append(('dhcp-option', 'option:domain-search,' + domain))
-				dnsmasqConf.append(('host-record', f'{hostName},{hostName}.{domain},{dnsmasqAddress}'))
-				dnsmasqConf.append(('expand-hosts', ''))
-				dnsmasqConf.append(('domain-needed', ''))
-
-			for dnsmasqConfOption, dnsmasqConfValue in dnsmasqConf:
-				if len(dnsmasqConfValue) > 0:
-					dnsmasqConfContents += f"{dnsmasqConfOption}={dnsmasqConfValue}\n"
-				else:
-					dnsmasqConfContents += f"{dnsmasqConfOption}\n"
-					
-			if 'append' in self.m_config['dnsmasq'][dnsmasqInstanceName].keys():
-				sanitizedAppendFilePath = helpers.SanitizeFileName(self.m_config['dnsmasq'][dnsmasqInstanceName]['append'], allowSlashes = True)
-				
-				with open(sanitizedAppendFilePath, 'r', encoding = 'utf-8') as dnsmasqAppendFile:
-					dnsmasqConfContents += dnsmasqAppendFile.read()
-			
-			with open(dnsmasqConfFilePath, 'w', encoding = 'utf-8') as dnsmasqConfFile:
-				dnsmasqConfFile.write(dnsmasqConfContents)
-				
-			proc = subprocess.run([
-				'dnsmasq',
-				'-g',
-				'router',
-				'--test',
-				'-C',
-				dnsmasqConfFilePath
-			])
-			
-			if proc.returncode != 0:
-				hadError = True
-				raise Exception(f'{__file__}:{sys._getframe().f_lineno} dnsmasq conf is invalid.')
-				
-			proc = subprocess.run([
-				'dnsmasq',
-				'-g',
-				'router',
-				'-x',
-				dnsmasqPidFilePath,
-				'-C',
-				dnsmasqConfFilePath
-			])
-			
-			if proc.returncode != 0:
-				hadError = True
-				raise Exception(f'{__file__}:{sys._getframe().f_lineno} dnsmasq exited with returncode={proc.returncode} Permissions?')	
-
-		return not hadError
-		
-	def SetupHostapd(self):
-		hadError = False
-		ranRfkillUnblock = False
-		
-		for hostapdInstanceName in self.m_config['hostapd']:
-			hostapdInterface = self.m_config['hostapd'][hostapdInstanceName]['interface']
-			hostapdBridge = self.m_config['hostapd'][hostapdInstanceName]['bridge']
-			hostapdConfFilePath = os.path.join('/run/router', helpers.SanitizeFileName(f'hostapd-{hostapdInstanceName}.conf'))
-			hostapdPidFilePath = os.path.join('/run/router', helpers.SanitizeFileName(f'hostapd-{hostapdInstanceName}.pid'))
-			hostapdConfContents = ''
-			hostapdConf = []
-			
-			if 'enable' in self.m_config['hostapd'][hostapdInstanceName].keys():
-				if self.m_config['hostapd'][hostapdInstanceName]['enable'] is False:
-					continue
-			
-			if 'interface' in self.m_config['hostapd'][hostapdInstanceName].keys():
-				if helpers.InterfaceExists(self.m_config['hostapd'][hostapdInstanceName]['interface']):
-					hostapdConf.append(('interface', helpers.SanitizeInterfaceName(self.m_config['hostapd'][hostapdInstanceName]['interface'])))
-				else:
-					hadError = True
-					raise Exception(f'{__file__}:{sys._getframe().f_lineno} Hostapd interface does not exist.')
-					
-			if 'bridge' in self.m_config['hostapd'][hostapdInstanceName].keys():
-				if helpers.InterfaceExists(self.m_config['hostapd'][hostapdInstanceName]['bridge']):
-					hostapdConf.append(('bridge', helpers.SanitizeInterfaceName(self.m_config['hostapd'][hostapdInstanceName]['bridge'])))
-				else:
-					hadError = True
-					raise Exception(f'{__file__}:{sys._getframe().f_lineno} Hostapd bridge interface does not exist.')
-			
-			for hostapdConfOption, hostapdConfValue in hostapdConf:
-				if len(hostapdConfValue) > 0:
-					hostapdConfContents += f"{hostapdConfOption}={hostapdConfValue}\n"
-				else:
-					hostapdConfContents += f"{hostapdConfOption}\n"
-					
-			if 'append' in self.m_config['hostapd'][hostapdInstanceName].keys():
-				sanitizedAppendFilePath = helpers.SanitizeFileName(self.m_config['hostapd'][hostapdInstanceName]['append'], allowSlashes = True)
-				
-				with open(sanitizedAppendFilePath, 'r', encoding = 'utf-8') as hostapdAppendFile:
-					hostapdConfContents += hostapdAppendFile.read()
-				
-			with open(hostapdConfFilePath, 'w', encoding = "utf-8") as hostapdConfFile:
-				hostapdConfFile.write(hostapdConfContents)
-			
-			# Before running hostapd for the first time, run rfkill to unblock the PHYs.
-			if not ranRfkillUnblock:
-				if helpers.RunRfkill(unblockAll = True):
-					ranRfkillUnblock = True
-				else:
-					hadError = True
-					raise Exception(f'{__file__}:{sys._getframe().f_lineno} rfkill failed.')
-			
-			proc = subprocess.run([
-				'hostapd',
-				'-dd',
-				'-K',
-				'-t',
-				'-B',
-				'-P',
-				hostapdPidFilePath,
-				hostapdConfFilePath
-			])
-			
-			if proc.returncode != 0:
-				hadError = True
-				raise Exception(f'{__file__}:{sys._getframe().f_lineno} hostapd exited with returncode={proc.returncode} Permissions?')	
-
 		return not hadError
 		
 	def TeardownDnsmasq(self, stopOnError = False):

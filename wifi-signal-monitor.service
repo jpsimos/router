@@ -1,0 +1,19 @@
+# Author Jacob A. Psimos
+
+[Unit]
+Description=Cares about WiFi signal strength of connected STAs.
+After=NetworkManager.service network-online.target router.service
+Requires=NetworkManager.service router.service
+Wants=network-online.target router.service
+Conflicts=hostapd.service wpa_supplicant.service
+
+[Service]
+Type=simple
+
+User=root
+Group=router
+#NoNewPrivileges=true
+ExecStart=/opt/router/wifi.py --config /opt/router/config.json signals
+
+[Install]
+WantedBy=multi-user.target

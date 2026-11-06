@@ -1,0 +1,15 @@
+# Author Jacob A. Psimos
+
+[Unit]
+Description=Run router-periodic.service every 5 seconds.
+After=router.service
+Requires=router.service
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=5s
+AccuracySec=1s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -17,21 +17,12 @@ import traceback
 import helpers
 from router import Router
 
-# Definitions
-EXIT_SUCCESS = 0
-EXIT_FAIL = 1
-COMMAND_NONE = 0
-COMMAND_STOP = -1
-COMMAND_START = -2
-COMMAND_RESTART = -3
-COMMAND_RELOAD = -4
-
 # Globals
 receivedSigQuit = False
 
 # Code
 def Main():
-	exitValue = EXIT_SUCCESS
+	exitValue = helpers.EXIT_SUCCESS
 	configFilePath = None
 	command = None
 	noBridges = None
@@ -47,28 +38,28 @@ def Main():
 		routerInstance = Router(configFilePath, noBridges, noDnsmasq, noHostapd)
 
 	except Exception as initializationException:
-		exitValue = EXIT_FAIL
-		command = COMMAND_NONE
+		exitValue = helpers.EXIT_FAIL
+		command = helpers.COMMAND_NONE
 		syslog.syslog(syslog.LOG_ERR, f'{__file__}:{sys._getframe().f_lineno} Initialization error: {initializationException}' + "\n" + traceback.format_exc())
 	
 	try:
-		if command == COMMAND_START:
+		if command == helpers.COMMAND_START:
 			routerInstance.Start()
 			
-		elif command == COMMAND_STOP:
+		elif command == helpers.COMMAND_STOP:
 			routerInstance.Stop()
 			
-		elif command == COMMAND_RESTART:
+		elif command == helpers.COMMAND_RESTART:
 			routerInstance.Restart()
 			
-		elif command == COMMAND_RELOAD:
+		elif command == helpers.COMMAND_RELOAD:
 			routerInstance.Reload()
 			
 		while not receivedSigQuit:
 			break
 			
 	except Exception as runtimeException:
-		exitValue = EXIT_FAIL
+		exitValue = helpers.EXIT_FAIL
 		syslog.syslog(syslog.LOG_ERR, f'{__file__}:{sys._getframe().f_lineno} Command error: {runtimeException}' + "\n" + traceback.format_exc())
 
 	syslog.closelog()
@@ -102,7 +93,7 @@ def PrintHelp(exitCode = None):
 
 def ParseArguments():
 	configFile = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'config.json')
-	command = COMMAND_NONE
+	command = helpers.COMMAND_NONE
 	noBridges = False
 	noDnsmasq = False
 	noHostapd = False
@@ -121,16 +112,16 @@ def ParseArguments():
 			configFile = nextArg
 			
 		elif arg == '--stop' or arg == '-S':
-			command = COMMAND_STOP
+			command = helpers.COMMAND_STOP
 			
 		elif arg == '--start' or arg == '-s':
-			command = COMMAND_START
+			command = helpers.COMMAND_START
 			
 		elif arg == '--restart' or arg == '-r':
-			command = COMMAND_RESTART
+			command = helpers.COMMAND_RESTART
 			
 		elif arg == '--reload' or arg == '-R':
-			command = COMMAND_RELOAD
+			command = helpers.COMMAND_RELOAD
 			
 		elif arg == '--no-bridges' or arg == '-B':
 			noBridges = True

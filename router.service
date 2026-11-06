@@ -3,6 +3,7 @@
 [Unit]
 Description=Linux router
 After=network-online.target NetworkManager.service
+Requires=NetworkManager.service
 Wants=network-online.target
 Conflicts=wpa_supplicant.service hostapd.service
 
