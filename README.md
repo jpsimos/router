@@ -13,13 +13,16 @@ Installed copy lives at `/opt/router`. This tree is the source of those files. T
 | `service.py` | CLI. Parses `--start`, `--stop`, `--restart`, `--reload` and builds a `Router`. |
 | `router.py` | Creates the bridge, restores the firewall, generates and runs `dnsmasq` and `hostapd`. |
 | `helpers.py` | Config load, interface and address checks, `rfkill`, interface delete. Imported by `router.py`, `service.py`, and `wifi.py`. |
-| `wifi.py` | Queries running `hostapd` instances through `hostapd_cli` (`stas`, `signals`). |
+| `wifi.py` | Queries running `hostapd` instances through `hostapd_cli` (`stas`, `signals`, `monitor`). |
 | `config.json` | Interface map, DHCP instance, and AP instances. |
 | `router.service` | Oneshot unit. `RemainAfterExit=true`. |
 | `firewall.ipt` | Static `iptables-restore` ruleset. |
 | `dnsmasq-dhcp0.append` | Extra `dnsmasq` lines appended to the generated config. |
-| `hostapd-ap0.append` | Not in this tree. `config.json` expects it at `/opt/router/hostapd-ap0.append`. |
-| `hostapd-ap1.append` | Not in this tree. `config.json` expects it at `/opt/router/hostapd-ap1.append`. |
+| `hostapd-ap0.append` | Extra `hostapd` lines for `ap0` (`wlan0`). |
+| `hostapd-ap1.append` | Extra `hostapd` lines for `ap1` (`wlan1`). |
+| `hostapd-ap2.append` | Present in the tree; not referenced by `config.json`. |
+| `wifi-signal-monitor.service` | Simple service that runs `wifi.py ... signals`. |
+| `wifi-signal-monitor.timer` | Timer that activates the signal monitor service. |
 
 Runtime files (`dnsmasq-*.conf`, `dnsmasq-*.pid`, `hostapd-*.conf`, `hostapd-*.pid`) are created in `/run/router` by `RuntimeDirectory=router` (`RuntimeDirectoryMode=0770`). `wifi.py` also points `hostapd_cli` at that directory (`-p /run/router`), so the hostapd append files need a control interface there.
 
@@ -44,7 +47,7 @@ The WAN interface is listed in `config.json` and is not configured by this code.
 
 `ExecStop` kills `dnsmasq` and `hostapd` from their pid files, unlinks those pid and conf files, `rfkill block all` once per hostapd instance, detaches LAN slaves (down, nomaster, promisc off), flushes and deletes the bridge, and sets `net.ipv4.ip_forward=0`. It does not flush the iptables ruleset.
 
-`ExecReload` sends `SIGHUP` to each running `dnsmasq` from its pid file. The hostapd loop reads the generated conf file, not the pid file, so that `SIGHUP` only goes out if the conf contents are numeric. The unit is `Type=oneshot`, so systemd does not supervise the child daemons after `service.py` exits.
+`ExecReload` regenerates the dnsmasq and hostapd configs, then sends `SIGHUP` to each running `dnsmasq` from its pid file. The hostapd loop reads the generated conf file (variable not in scope), not the pid file, so that `SIGHUP` only goes out if the conf contents are numeric. The unit is `Type=oneshot`, so systemd does not supervise the child daemons after `service.py` exits.
 
 ## Current config
 
@@ -52,9 +55,21 @@ The WAN interface is listed in `config.json` and is not configured by this code.
 
 `dhcp0` listens on `br0`, serves `192.168.1.10`–`192.168.1.100`, lease 3600 seconds, domain `lan`. Generated options also set the router and DNS server to `192.168.1.1` and a host record for `/etc/hostname`. The append file sets group `router`, the resolver to OpenDNS (`208.67.220.220`, `208.67.222.222`), and `no-resolv`.
 
-`ap0` is `wlan0` on `br0`. `ap1` is `wlan1` on `br0`. SSID, channel, and passphrase live in the hostapd append files, which are not in this tree.
+`ap0` is `wlan0` on `br0`. `ap1` is `wlan1` on `br0`. Both use SSID `salt` and passphrase `pepper`. `ap0` is 2.4 GHz channel 11 (`hw_mode=g`, `HT40-`). `ap1` is 5 GHz channel 36 (`hw_mode=a`, VHT 80 MHz centered on 42). Control interface is `/run/router`.
 
 `firewall.ipt` defaults INPUT and FORWARD to DROP and OUTPUT to ACCEPT. It masquerades `192.168.1.0/24` out `wan0`, accepts DHCP and DNS on `br0`, accepts SSH, SMB, and a few other TCP ports from the LAN, and drops `192.168.1.2`, `192.168.1.3`, `192.168.1.4`, and `192.168.1.31` toward the WAN.
+
+## Wi-Fi signal monitor
+
+`wifi-signal-monitor.service` is a `Type=simple` unit that runs:
+
+```
+/opt/router/wifi.py --config /opt/router/config.json signals
+```
+
+It prints a JSON list of STA signals (after polling each station) and exits. `wifi-signal-monitor.timer` starts it on boot (after 30 s) and then every 5 s. The timer description still refers to `router-periodic.service`.
+
+`wifi.py` also supports `stas` (full STA details) and `monitor` (continuous loop).
 
 ## Commands
 
@@ -72,6 +87,7 @@ Station list from the running APs (`hostapd_cli -p /run/router`):
 ```
 wifi.py --config /opt/router/config.json stas
 wifi.py --config /opt/router/config.json signals
+wifi.py --config /opt/router/config.json monitor
 ```
 
 systemd:
@@ -80,6 +96,7 @@ systemd:
 systemctl start router.service
 systemctl stop router.service
 systemctl reload router.service
+systemctl start wifi-signal-monitor.timer
 ```
 
 ## NetworkManager
